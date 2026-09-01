@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+#
+# atomic-deploy — release con symlink, attivazione atomica e rollback in un comando.
+#
+# set -e ferma lo script al primo comando fallito, -u trasforma una variabile
+# non definita in errore invece che in stringa vuota, pipefail propaga il
+# fallimento di un comando in mezzo a una pipeline. Un deploy che prosegue dopo
+# un errore e' peggio di un deploy che non parte.
+set -euo pipefail
+IFS=$'\n\t'
+
+AD_VERSION="1.0.0"
+
+AD_BIN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+AD_LIB_DIR="$(cd -- "$AD_BIN_DIR/../lib" && pwd)"
+
+# shellcheck source=../lib/common.sh
+. "$AD_LIB_DIR/common.sh"
+# shellcheck source=../lib/release.sh
+. "$AD_LIB_DIR/release.sh"
+# shellcheck source=../lib/hooks.sh
+. "$AD_LIB_DIR/hooks.sh"
+
+AD_CONFIG="${AD_CONFIG:-atomic-deploy.conf}"
+AD_LOCK_DIR=""
+
+usage() {
+  cat <<'TESTO'
+atomic-deploy — release con symlink, attivazione atomica e rollback.
+
+Uso:
+  atomic-deploy [-c FILE] <comando> [opzioni]
+
+Comandi:
+  init                      crea l'albero delle cartelle e i percorsi condivisi
+  deploy                    crea una release, la attiva, verifica, pota le vecchie
+  rollback                  torna alla release precedente
+  list                      elenca le release, segnando quella attiva
+  current                   stampa il nome della release attiva
+  prune                     rimuove le release piu' vecchie
+  status                    stato sintetico dell'installazione
+  version                   stampa la versione
+
+Opzioni di deploy:
+  --from-dir DIR            contenuto da pubblicare, preso da una cartella
+  --archive FILE            contenuto da pubblicare, preso da un archivio tar
+  --release NOME            nome esplicito della release
+  --no-health               salta il controllo di salute
+  --no-prune                non rimuovere le release piu' vecchie
+
+Opzioni di rollback:
+  --to NOME                 torna a una release specifica invece che alla precedente
+
+Opzioni di prune:
+  --keep N                  quante release conservare (default: KEEP_RELEASES)
+
+Opzioni generali:
+  -c, --config FILE         file di configurazione (default: atomic-deploy.conf)
+  -h, --help                questo messaggio
+
+Codici di uscita:
+  0  operazione riuscita
+  1  operazione fallita
+  2  argomenti o configurazione non utilizzabili
+TESTO
+}
+
+# ---------------------------------------------------------------------------
+# Comandi
+# ---------------------------------------------------------------------------
+
+cmd_init() {
+  ad::init_tree
+  ad::ok "albero pronto in $APP_ROOT"
+  printf '  releases/  shared/  %s/\n' "$HOOKS_DIR" >&2
+}
+
+cmd_deploy() {
+  local source="" kind="" name="" run_health=1 do_prune=1
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from-dir) [ $# -ge 2 ] || { AD_EXIT_CODE=2 ad::die "--from-dir richiede una cartella"; }
+                  source="$2"; kind="dir"; shift 2 ;;
+      --archive) [ $# -ge 2 ] || { AD_EXIT_CODE=2 ad::die "--archive richiede un file"; }
+                 source="$2"; kind="archive"; shift 2 ;;
+      --release) [ $# -ge 2 ] || { AD_EXIT_CODE=2 ad::die "--release richiede un nome"; }
+                 name="$2"; shift 2 ;;
+      --no-health) run_health=0; shift ;;
+      --no-prune) do_prune=0; shift ;;
+      *) AD_EXIT_CODE=2 ad::die "opzione sconosciuta per deploy: $1" ;;
+    esac
+  done
+
+  [ -n "$kind" ] || { AD_EXIT_CODE=2 ad::die "serve --from-dir oppure --archive"; }
+
+  ad::require_command tar cp ln mv date
+  ad::init_tree
+  ad::lock_acquire
+  trap 'ad::lock_release' EXIT
+  ad::cleanup_incomplete
+
+  [ -n "$name" ] || name="$(ad::new_release_name)"
+  ad::log "release $name"
+
+  local release_path previous
+  previous="$(ad::current_release 2>/dev/null || true)"
+  release_path="$(ad::stage_release "$name" "$source" "$kind")"
+  ad::ok "contenuto pronto in $release_path"
+
+  if ! ad::run_hook pre-activate "$release_path"; then
+    rm -rf "$release_path"
+    ad::die "hook pre-activate fallito: la release e' stata rimossa, niente e' cambiato"
+  fi
+
+  ad::activate "$release_path"
+  ad::ok "current punta a $name"
+
+  if [ "$run_health" -eq 1 ] && [ -n "$HEALTH_CHECK" ]; then
+    if ! ad::run_health_check; then
+      if [ -n "$previous" ]; then
+        ad::warn "controllo di salute fallito: torno a $previous"
+        ad::activate "$(ad::releases_dir)/$previous"
+        ad::run_hook post-rollback "$(ad::releases_dir)/$previous" || true
+        ad::die "deploy annullato, in produzione e' tornata $previous"
+      fi
+      ad::die "controllo di salute fallito e nessuna release precedente su cui tornare"
+    fi
+  fi
+
+  if ! ad::run_hook post-activate "$release_path"; then
+    ad::warn "hook post-activate fallito: la release resta attiva, controlla i servizi"
+  fi
+
+  if [ "$do_prune" -eq 1 ]; then
+    ad::prune "$KEEP_RELEASES"
+  fi
+
+  ad::ok "deploy completato: $name"
+}
+
+cmd_rollback() {
+  local target=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --to) [ $# -ge 2 ] || { AD_EXIT_CODE=2 ad::die "--to richiede un nome di release"; }
+            target="$2"; shift 2 ;;
+      *) AD_EXIT_CODE=2 ad::die "opzione sconosciuta per rollback: $1" ;;
+    esac
+  done
+
+  ad::lock_acquire
+  trap 'ad::lock_release' EXIT
+
+  [ -n "$target" ] || target="$(ad::previous_release)"
+  [ -n "$target" ] || ad::die "non esiste una release precedente su cui tornare"
+
+  local path="$(ad::releases_dir)/$target"
+  [ -d "$path" ] || ad::die "release inesistente: $target"
+
+  local current
+  current="$(ad::current_release 2>/dev/null || true)"
+  [ "$target" != "$current" ] || ad::die "$target e' gia' la release attiva"
+
+  ad::activate "$path"
+  ad::ok "current punta a $target"
+
+  if ! ad::run_hook post-rollback "$path"; then
+    ad::warn "hook post-rollback fallito: il collegamento e' comunque gia' cambiato"
+  fi
+  ad::ok "rollback completato: $target"
+}
+
+cmd_list() {
+  local current name
+  current="$(ad::current_release 2>/dev/null || true)"
+  local found=0
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    found=1
+    if [ "$name" = "$current" ]; then
+      printf '%s %s\n' "$(ad::paint 32 '*')" "$name"
+    else
+      printf '  %s\n' "$name"
+    fi
+  done <<< "$(ad::list_releases)"
+  [ "$found" -eq 1 ] || ad::log "nessuna release presente"
+}
+
+cmd_current() {
+  local current
+  current="$(ad::current_release 2>/dev/null || true)"
+  [ -n "$current" ] || ad::die "nessuna release attiva"
+  printf '%s\n' "$current"
+}
+
+cmd_prune() {
+  local keep="$KEEP_RELEASES"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --keep) [ $# -ge 2 ] || { AD_EXIT_CODE=2 ad::die "--keep richiede un numero"; }
+              keep="$2"; shift 2 ;;
+      *) AD_EXIT_CODE=2 ad::die "opzione sconosciuta per prune: $1" ;;
+    esac
+  done
+  case "$keep" in
+    ''|*[!0-9]*) AD_EXIT_CODE=2 ad::die "--keep deve essere un intero" ;;
+  esac
+  [ "$keep" -ge 1 ] || { AD_EXIT_CODE=2 ad::die "--keep deve essere almeno 1"; }
+
+  ad::lock_acquire
+  trap 'ad::lock_release' EXIT
+  ad::prune "$keep"
+  ad::ok "potatura completata, conservate al massimo $keep release"
+}
+
+cmd_status() {
+  local current previous count
+  current="$(ad::current_release 2>/dev/null || echo '(nessuna)')"
+  previous="$(ad::previous_release 2>/dev/null || echo '(nessuna)')"
+  count="$(ad::list_releases | grep -c . || true)"
+
+  printf 'radice        %s\n' "$APP_ROOT"
+  printf 'attiva        %s\n' "$current"
+  printf 'precedente    %s\n' "${previous:-(nessuna)}"
+  printf 'release       %s (ne conserva %s)\n' "$count" "$KEEP_RELEASES"
+  printf 'condivisi     %s\n' "${SHARED_DIRS:-(nessuno)} ${SHARED_FILES:-}"
+  printf 'salute        %s\n' "${HEALTH_CHECK:-(nessun controllo)}"
+}
+
+# ---------------------------------------------------------------------------
+# Ingresso
+# ---------------------------------------------------------------------------
+
+main() {
+  local command=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -c|--config) [ $# -ge 2 ] || { AD_EXIT_CODE=2 ad::die "--config richiede un file"; }
+                   AD_CONFIG="$2"; shift 2 ;;
+      -h|--help) usage; return 0 ;;
+      version|--version) printf 'atomic-deploy %s\n' "$AD_VERSION"; return 0 ;;
+      -*) AD_EXIT_CODE=2 ad::die "opzione sconosciuta: $1" ;;
+      *) command="$1"; shift; break ;;
+    esac
+  done
+
+  [ -n "$command" ] || { usage >&2; AD_EXIT_CODE=2 ad::die "nessun comando indicato"; }
+
+  ad::load_config "$AD_CONFIG"
+
+  case "$command" in
+    init) cmd_init "$@" ;;
+    deploy) cmd_deploy "$@" ;;
+    rollback) cmd_rollback "$@" ;;
+    list) cmd_list "$@" ;;
+    current) cmd_current "$@" ;;
+    prune) cmd_prune "$@" ;;
+    status) cmd_status "$@" ;;
+    *) AD_EXIT_CODE=2 ad::die "comando sconosciuto: $command" ;;
+  esac
+}
+
+main "$@"

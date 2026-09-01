@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installa shellcheck
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y shellcheck
+
+      # -x segue le direttive `source=` e analizza anche i file inclusi, che
+      # altrimenti resterebbero fuori dal controllo.
+      - name: Analizza gli script
+        run: shellcheck -x bin/atomic-deploy lib/*.sh test/run-tests.sh examples/hooks/*
+
+  test:
+    name: Test di integrazione
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versioni degli strumenti
+        run: |
+          bash --version | head -1
+          mv --version | head -1
+
+      - name: Esegui i test
+        run: bash test/run-tests.sh
+
+  # Il comportamento dipende da symlink e da rename(2): va verificato anche
+  # dove le coreutils non sono quelle GNU di Ubuntu.
+  test-macos:
+    name: Test di integrazione (macOS)
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installa le coreutils GNU
+        run: |
+          brew install coreutils bash
+          echo "/opt/homebrew/opt/coreutils/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+
+      - name: Esegui i test
+        run: bash test/run-tests.sh

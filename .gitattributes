@@ -1,0 +1,4 @@
+# Fine riga LF nel repository: gli script vengono eseguiti su Linux in CI e in
+# produzione, dove un CRLF residuo rompe lo shebang.
+* text=auto eol=lf
+*.png binary

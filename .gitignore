@@ -1,0 +1,6 @@
+*.log
+.DS_Store
+
+# Configurazione reale del server: nel repository sta solo quella di esempio.
+atomic-deploy.conf
+!examples/atomic-deploy.conf

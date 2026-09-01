@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+#
+# Eseguito sulla release nuova, prima che current cambi.
+#
+# Qui va tutto ciò che può ancora essere annullato senza conseguenze: se questo
+# hook esce con codice diverso da zero il deploy si ferma, la release viene
+# rimossa e in produzione non è cambiato niente.
+#
+# Variabili disponibili:
+#   AD_APP_ROOT          radice dell'installazione
+#   AD_RELEASE_PATH      percorso della release appena creata
+#   AD_RELEASE_NAME      nome della release
+#   AD_PREVIOUS_RELEASE  nome della release attiva prima di questa
+#   AD_SHARED_DIR        cartella dei percorsi condivisi
+#   AD_CURRENT_LINK      percorso del collegamento current
+#   AD_HOOK              nome dell'hook in esecuzione
+set -euo pipefail
+
+cd "$AD_RELEASE_PATH"
+
+# Le migrazioni girano prima dello scambio: se falliscono, la versione online
+# resta quella vecchia e il database non è a metà strada fra due schemi.
+if [ -f artisan ]; then
+  php artisan migrate --force
+fi
+
+# Verifica che il pacchetto contenga davvero ciò che serve, invece di scoprirlo
+# quando il processo non parte.
+for atteso in public/index.php vendor/autoload.php; do
+  [ -e "$atteso" ] || { echo "manca $atteso nella release" >&2; exit 1; }
+done

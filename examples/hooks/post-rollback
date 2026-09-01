@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+#
+# Eseguito dopo un rollback, sia manuale sia automatico dopo un controllo di
+# salute fallito. Quando arriva qui il collegamento è già tornato indietro.
+set -euo pipefail
+
+systemctl reload app.service || systemctl restart app.service
+systemctl reload nginx
+
+# Un rollback automatico avviene mentre nessuno guarda: se non lascia traccia
+# da qualche parte, la mattina dopo il servizio gira su una versione che
+# nessuno ricorda di aver messo in produzione.
+logger -t atomic-deploy "rollback a $AD_RELEASE_NAME"

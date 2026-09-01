@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+#
+# Eseguito dopo lo scambio di current e dopo il controllo di salute.
+#
+# Un fallimento qui non annulla il deploy: la release è già in produzione e ha
+# già risposto al controllo. Viene segnalato come avviso, perché il posto dove
+# fermare un deploy è pre-activate, non qui.
+set -euo pipefail
+
+# Ricarica dei processi: il gestore di servizi vede il nuovo contenuto perché
+# current punta già alla release nuova.
+systemctl reload app.service || systemctl restart app.service
+
+# Il reverse proxy tiene aperti i descrittori della vecchia release: senza un
+# reload continua a servire i file della versione precedente finché non scade
+# la sua cache interna.
+systemctl reload nginx
+
+echo "attiva: $AD_RELEASE_NAME (precedente: ${AD_PREVIOUS_RELEASE:-nessuna})"
