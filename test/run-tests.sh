@@ -193,6 +193,10 @@ test_hook_pre_activate() {
   setup
   deploy --release r1 --no-health
 
+  # Le virgolette singole sono volute: il corpo dell'hook deve finire nel file
+  # senza essere espanso qui, perche' le variabili le riceve al momento in cui
+  # atomic-deploy lo esegue.
+  # shellcheck disable=SC2016
   hook pre-activate 'printf "%s\n" "$AD_RELEASE_NAME" > "$AD_APP_ROOT/visto-da-pre"; exit 0'
   deploy --release r2 --no-health
   assert_equals "l'hook riceve il nome della release" "$(cat "$APP/visto-da-pre")" "r2"
@@ -208,6 +212,7 @@ test_hook_pre_activate() {
 test_hook_post_activate() {
   section "hook post-activate"
   setup
+  # shellcheck disable=SC2016
   hook post-activate 'printf "%s|%s\n" "$AD_HOOK" "$AD_RELEASE_NAME" > "$AD_APP_ROOT/visto-da-post"'
   deploy --release r1 --no-health
   assert_equals "post-activate gira dopo l'attivazione" "$(cat "$APP/visto-da-post")" "post-activate|r1"
@@ -374,7 +379,7 @@ if ! ln -s "$preflight/bersaglio" "$preflight/prova" 2>/dev/null || [ ! -L "$pre
 fi
 if ! mv -T "$preflight/prova" "$preflight/prova2" 2>/dev/null; then
   rm -rf "$preflight"
-  printf '\n`mv -T` non e'"'"' disponibile: servono le coreutils GNU.\n'
+  printf '\nmv -T non è disponibile: servono le coreutils GNU.\n'
   exit 1
 fi
 rm -rf "$preflight"

@@ -63,6 +63,8 @@ HEALTH_RETRIES=5
 HEALTH_DELAY=2
 HOOKS_DIR="hooks"
 OWNER=""
+# Letta da lib/release.sh: analizzando un file per volta shellcheck non la vede.
+# shellcheck disable=SC2034
 PERMISSIONS=""
 
 ad::config_key_allowed() {

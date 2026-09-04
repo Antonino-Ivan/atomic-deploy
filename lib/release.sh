@@ -34,8 +34,10 @@ ad::new_release_name() {
 # diventare una release che qualcuno puo' attivare o su cui puo' tornare.
 ad::stage_release() {
   local name="$1" source="$2" kind="$3"
-  local staging="$(ad::releases_dir)/$name.incomplete"
-  local final="$(ad::releases_dir)/$name"
+  local releases staging final
+  releases="$(ad::releases_dir)"
+  staging="$releases/$name.incomplete"
+  final="$releases/$name"
 
   [ -e "$final" ] && ad::die "la release $name esiste gia'"
   rm -rf "$staging"
@@ -105,8 +107,9 @@ ad::apply_ownership() {
 # `mv -T` usa invece rename(2), che sostituisce il collegamento in un colpo solo.
 ad::activate() {
   local release_path="$1"
-  local link="$(ad::current_link)"
-  local staging="$APP_ROOT/.current.$$"
+  local link staging
+  link="$(ad::current_link)"
+  staging="$APP_ROOT/.current.$$"
 
   ln -s "$release_path" "$staging" || ad::die "impossibile creare il collegamento temporaneo"
   if ! mv -T "$staging" "$link" 2>/dev/null; then

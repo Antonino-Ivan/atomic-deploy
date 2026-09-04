@@ -14,6 +14,7 @@ AD_VERSION="1.0.0"
 AD_BIN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 AD_LIB_DIR="$(cd -- "$AD_BIN_DIR/../lib" && pwd)"
 
+# shellcheck source-path=SCRIPTDIR/../lib
 # shellcheck source=../lib/common.sh
 . "$AD_LIB_DIR/common.sh"
 # shellcheck source=../lib/release.sh
@@ -22,6 +23,9 @@ AD_LIB_DIR="$(cd -- "$AD_BIN_DIR/../lib" && pwd)"
 . "$AD_LIB_DIR/hooks.sh"
 
 AD_CONFIG="${AD_CONFIG:-atomic-deploy.conf}"
+# Il lock viene preso e rilasciato dalle funzioni in lib/common.sh: qui la
+# variabile esiste solo per essere definita prima che `set -u` la incontri.
+# shellcheck disable=SC2034
 AD_LOCK_DIR=""
 
 usage() {
@@ -155,7 +159,8 @@ cmd_rollback() {
   [ -n "$target" ] || target="$(ad::previous_release)"
   [ -n "$target" ] || ad::die "non esiste una release precedente su cui tornare"
 
-  local path="$(ad::releases_dir)/$target"
+  local path
+  path="$(ad::releases_dir)/$target"
   [ -d "$path" ] || ad::die "release inesistente: $target"
 
   local current
