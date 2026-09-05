@@ -14,12 +14,15 @@ AD_VERSION="1.0.0"
 AD_BIN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 AD_LIB_DIR="$(cd -- "$AD_BIN_DIR/../lib" && pwd)"
 
-# shellcheck source-path=SCRIPTDIR/../lib
-# shellcheck source=../lib/common.sh
+# I percorsi delle direttive sono relativi alla radice del repository, che
+# source-path fissa a partire dalla posizione di questo script: cosi' shellcheck
+# segue i file inclusi da qualunque cartella venga lanciato.
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=lib/common.sh
 . "$AD_LIB_DIR/common.sh"
-# shellcheck source=../lib/release.sh
+# shellcheck source=lib/release.sh
 . "$AD_LIB_DIR/release.sh"
-# shellcheck source=../lib/hooks.sh
+# shellcheck source=lib/hooks.sh
 . "$AD_LIB_DIR/hooks.sh"
 
 AD_CONFIG="${AD_CONFIG:-atomic-deploy.conf}"

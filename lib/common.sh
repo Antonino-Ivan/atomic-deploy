@@ -1,5 +1,11 @@
 # shellcheck shell=bash
+#
 # Funzioni condivise: log, errori, lock, lettura della configurazione.
+#
+# Questo file dichiara lo stato condiviso dell'intero programma. Analizzando un
+# file per volta shellcheck non vede chi legge quelle variabili — bin/ e
+# lib/release.sh — e le segnala tutte come inutilizzate.
+# shellcheck disable=SC2034
 
 AD_COLOR_ENABLED=0
 if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -63,8 +69,6 @@ HEALTH_RETRIES=5
 HEALTH_DELAY=2
 HOOKS_DIR="hooks"
 OWNER=""
-# Letta da lib/release.sh: analizzando un file per volta shellcheck non la vede.
-# shellcheck disable=SC2034
 PERMISSIONS=""
 
 ad::config_key_allowed() {
